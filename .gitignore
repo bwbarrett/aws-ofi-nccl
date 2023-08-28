@@ -6,6 +6,7 @@ src/*.la
 libnccl-net.so
 tags
 config.h
+aws-ofi-nccl.spec
 
 src/tuner/.dirstamp
 src/tuner/*.lo

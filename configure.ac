@@ -134,6 +134,7 @@ AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
       [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
 
 AC_CONFIG_FILES([Makefile
+                 aws-ofi-nccl.spec
                  include/Makefile
                  src/Makefile
                  tests/Makefile
