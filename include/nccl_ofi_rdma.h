@@ -619,6 +619,9 @@ typedef struct nccl_net_ofi_rdma_device_rail {
 
 	/* Access domain handles */
 	struct fid_domain *domain;
+
+	/* Completion Queue handle */
+	struct fid_cq *cq;
 } nccl_net_ofi_rdma_device_rail_t;
 
 /*

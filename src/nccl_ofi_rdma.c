@@ -5316,6 +5316,16 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
 {
+
+	if (ofi_nccl_cq_per_endpoint() == 0) {
+		/* when using a cq per domain (instead of a cq per
+		endpoint), set the rail->cq pointer to NULL here so
+		that the cq isn't actually released in ep_release().
+		The cq will be released when the domain is cleaned up
+		(which it currently never is, because there's no
+		plugin fini() function */
+		rail->cq = NULL;
+	}
 	nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
 				     rail->cq, dev_id);
 	rail->ofi_ep = NULL;
@@ -5386,7 +5396,9 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 		ep_rail->domain = dev_rail->domain;
 	}
 
-	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, ep_rail->domain, &ep_rail->ofi_ep,
+	ep_rail->cq = dev_rail->cq;
+
+	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, dev_rail->domain, &ep_rail->ofi_ep,
 						&ep_rail->av, &ep_rail->cq);
 	if (ret != 0) {
 		return ret;
@@ -5454,6 +5466,10 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		NCCL_OFI_WARN("Invalid device provided");
 		goto exit;
 	}
+
+	/* BWB: FIX me.  WOrk around a cleanup bug in the Libfabric
+	   code */
+	return 0;
 
 	pthread_mutex_lock(&device->ep_lock);
 
@@ -5524,9 +5540,13 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	/* Obtain lock */
 	pthread_mutex_lock(&device->ep_lock);
 
-	/* Obtain thread-local rdma endpoint. Allocate and
-	 * initialize endpoint if necessary. */
-	nccl_net_ofi_rdma_ep_t *ep = pthread_getspecific(device->ep_key);
+	int ep_per_comm = ofi_nccl_endpoint_per_communicator();
+	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	if (ep_per_comm == 0) {
+		/* Obtain thread-local rdma endpoint. Allocate and
+		 * initialize endpoint if neccessary. */
+		ep = pthread_getspecific(device->ep_key);
+	}
 	if (!ep) {
 		int num_rails = device->num_rails;
 
@@ -5612,6 +5632,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev)
 {
 	int ret = 0;
+	struct fi_cq_attr cq_attr = {0};
 
 	/* Create fabric */
 	ret = fi_fabric(rail_dev->info->fabric_attr, &rail_dev->fabric, NULL);
@@ -5633,6 +5654,18 @@ static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_
 				&rail_dev->domain, NULL);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			goto error;
+		}
+	}
+
+	if (ofi_nccl_cq_per_endpoint() == 0) {
+		rail_dev->cq = NULL;
+	} else {
+		cq_attr.format = FI_CQ_FORMAT_DATA;
+		ret = fi_cq_open(rail_dev->domain, &cq_attr, &rail_dev->cq, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
 				      ret, fi_strerror(-ret));
 			goto error;
 		}

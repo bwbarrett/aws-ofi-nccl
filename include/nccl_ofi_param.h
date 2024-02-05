@@ -214,6 +214,20 @@ OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
  */
 OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
 
+/*
+ * If 0, create a Libfabric endpoint per domain, shared across all
+ * communicators.  If non-0, create a Libfabric endpoint per
+ * communicator.
+ */
+OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 1);
+
+/*
+ * If 0, create a Libfabric CQ per domain, even if Libfabric endpoints
+ * are associated with communicators.  If non-zer, create a CQ per
+ * endpoint, regardless of how many endpoints are created per domain.
+ */
+OFI_NCCL_PARAM_INT(cq_per_endpoint, "CQ_PER_ENDPOINT", 0);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
