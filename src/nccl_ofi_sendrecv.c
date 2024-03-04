@@ -2584,11 +2584,11 @@ static void get_hints(struct fi_info *hints, int req_gdr)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
-	hints->domain_attr->threading = FI_THREAD_SAFE;
+	hints->domain_attr->threading = FI_THREAD_DOMAIN;
 
-	/* Set progress mode to unspec to use the provider's default mode. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	/* get rid of the cq poll lock that still exists with FI_THREAD_DOMAIN */
+	hints->domain_attr->control_progress = FI_PROGRESS_CONTROL_UNIFIED;
+	hints->domain_attr->data_progress = FI_PROGRESS_MANUAL;
 
 	/* Set MR mode bits to indicate FI_MR_BASIC registration */
 	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
