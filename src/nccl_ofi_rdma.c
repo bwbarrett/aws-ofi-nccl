@@ -133,13 +133,22 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
 static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
 
+static inline nccl_net_ofi_rdma_device_t *get_device_from_ep(nccl_net_ofi_rdma_ep_t *ep)
+{
+	return (nccl_net_ofi_rdma_device_t*)ep->base.device;
+}
+
+
 /*
  * @brief	Get endpoint communicator with given ID
  */
 static inline nccl_net_ofi_comm_t *get_comm(nccl_net_ofi_rdma_ep_t *ep, uint32_t local_comm_id)
 {
+	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+
 	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
-	return ep->comms[local_comm_id];
+	assert(local_comm_id < device->num_comm_ids);
+	return device->comms[local_comm_id];
 }
 
 /*
@@ -149,8 +158,11 @@ static inline void set_comm(nccl_net_ofi_rdma_ep_t *ep,
 			    uint32_t local_comm_id,
 			    nccl_net_ofi_comm_t *comm)
 {
+	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+
 	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
-	ep->comms[local_comm_id] = comm;
+	assert(local_comm_id < device->num_comm_ids);
+	device->comms[local_comm_id] = comm;
 }
 
 /*
@@ -3255,7 +3267,7 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	set_comm(ep, r_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(ep->comm_idpool, r_comm->local_comm_id);
+	ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", r_comm->local_comm_id);
 	}
@@ -3478,7 +3490,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 	r_comm->base.close = recv_close;
 
 	/* Allocate recv communicator ID */
-	int comm_id = nccl_ofi_idpool_allocate_id(ep->comm_idpool);
+	int comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		r_comm->local_comm_id = ~0;
 		goto error;
@@ -3490,7 +3502,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", conn_msg->local_comm_id,
 					  dev_id);
 		goto error;
-    }
+	}
 
 	r_comm->remote_comm_id = conn_msg->local_comm_id;
 	r_comm->next_msg_seq_num = 0;
@@ -3588,7 +3600,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 		if (r_comm->msgbuff)
 			nccl_ofi_msgbuff_destroy(r_comm->msgbuff);
 		if (~0 != r_comm->local_comm_id) {
-			ret = nccl_ofi_idpool_free_id(ep->comm_idpool, r_comm->local_comm_id);
+			ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", r_comm->local_comm_id);
 			}
@@ -3948,7 +3960,8 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	}
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool, l_comm->comm_id);
+	ret = nccl_ofi_idpool_free_id(get_device_from_ep((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool,
+				      l_comm->comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", l_comm->comm_id);
 	}
@@ -3997,8 +4010,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->base.close = listen_close;
 	l_comm->leader_local_ep = first_rail->ofi_ep;
 
-    /* Allocate listen communicator ID */
-	int comm_id = nccl_ofi_idpool_allocate_id(ep->comm_idpool);
+	/* Allocate listen communicator ID */
+	int comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		l_comm->comm_id = ~0;
 		ret = comm_id;
@@ -4021,8 +4034,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
  error:
 	if (l_comm && ~0 != l_comm->comm_id) {
-		if (0 != nccl_ofi_idpool_free_id(ep->comm_idpool, l_comm->comm_id)) {
-			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", l_comm->comm_id);
+		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, l_comm->comm_id)) {
+			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", l_comm->comm_id);
 		}
 	}
 	free(l_comm);
@@ -4690,7 +4703,8 @@ static int send_close(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	set_comm(ep, s_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(ep->comm_idpool, s_comm->local_comm_id);
+	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	ret = nccl_ofi_idpool_free_id(device->comm_idpool, s_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", s_comm->local_comm_id);
 	}
@@ -4955,7 +4969,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->remote_comm_id = handle->comm_id;
 
 	/* Allocate send communicator ID */
-	int comm_id = nccl_ofi_idpool_allocate_id(ep->comm_idpool);
+	int comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		ret_s_comm->local_comm_id = ~0;
 		ret = comm_id;
@@ -5023,7 +5037,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
  error:
 	if (ret_s_comm && ~0 != ret_s_comm->local_comm_id) {
-		if (0 != nccl_ofi_idpool_free_id(ep->comm_idpool, ret_s_comm->local_comm_id)) {
+		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, ret_s_comm->local_comm_id)) {
 			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", ret_s_comm->local_comm_id);
 		}
 	}
@@ -5473,17 +5487,6 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 			goto unlock;
 		}
 
-		ret = nccl_ofi_idpool_fini(ep->comm_idpool);
-		if (OFI_UNLIKELY(ret != 0)) {
-			goto unlock;
-		}
-
-		free(ep->comm_idpool);
-		ep->comm_idpool = NULL;
-
-		free(ep->comms);
-		ep->comms = NULL;
-
 		ret = nccl_ofi_deque_finalize(ep->pending_reqs_queue);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to finalize pending_reqs_queue: %d", ret);
@@ -5570,30 +5573,6 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		ret = nccl_ofi_deque_init(&ep->pending_reqs_queue);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to init pending_reqs_queue: %d", ret);
-			goto unlock;
-		}
-
-		/* Create array of comms. */
-		/* TODO make this array expandable */
-		ep->comms = calloc(NCCL_OFI_RDMA_MAX_COMMS, sizeof(nccl_net_ofi_comm_t*));
-		if (!ep->comms) {
-			NCCL_OFI_WARN("Failed to alloc comms array");
-			ret = -ENOMEM;
-			goto unlock;
-		}
-
-		/* Initialize endpoint ID pool */
-		ep->comm_idpool = malloc(sizeof(nccl_ofi_idpool_t));
-		if (OFI_UNLIKELY(ep->comm_idpool == NULL)) {
-			ret = -ENOMEM;
-			NCCL_OFI_WARN("Unable to allocate rdma endpoint ID pool");
-			goto unlock;
-		}
-
-		ret = nccl_ofi_idpool_init(ep->comm_idpool, device->num_comm_ids);
-		if (OFI_UNLIKELY(ret != 0)) {
-			free(ep->comm_idpool);
-			ep->comm_idpool = NULL;
 			goto unlock;
 		}
 
@@ -6036,6 +6015,30 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		/* Initialize libfabric resources of rdma device */
 		ret = device_prepare_for_connection(device);
 		if (ret != 0) {
+			goto error;
+		}
+
+		/* Create array of comms. */
+		/* TODO make this array expandable */
+		device->comms = calloc(NCCL_OFI_RDMA_MAX_COMMS, sizeof(nccl_net_ofi_comm_t*));
+		if (!device->comms) {
+			NCCL_OFI_WARN("Failed to alloc comms array");
+			ret = -ENOMEM;
+			goto error;
+		}
+
+		/* Initialize endpoint ID pool */
+		device->comm_idpool = malloc(sizeof(nccl_ofi_idpool_t));
+		if (OFI_UNLIKELY(device->comm_idpool == NULL)) {
+			NCCL_OFI_WARN("Unable to allocate rdma endpoint ID pool");
+			ret = -ENOMEM;
+			goto error;
+		}
+
+		ret = nccl_ofi_idpool_init(device->comm_idpool, device->num_comm_ids);
+		if (OFI_UNLIKELY(ret != 0)) {
+			free(device->comm_idpool);
+			device->comm_idpool = NULL;
 			goto error;
 		}
 
