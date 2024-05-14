@@ -5398,6 +5398,9 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 
 	ep_rail->cq = dev_rail->cq;
 
+	assert(ofi_nccl_cq_per_endpoint() == 0 ? dev_rail->cq != NULL :
+	       dev_rail->cq == NULL);
+
 	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, dev_rail->domain, &ep_rail->ofi_ep,
 						&ep_rail->av, &ep_rail->cq);
 	if (ret != 0) {
@@ -5659,7 +5662,9 @@ static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_
 		}
 	}
 
-	if (ofi_nccl_cq_per_endpoint() == 0) {
+	if (ofi_nccl_cq_per_endpoint() != 0) {
+		/* In this mode, set cq to NULL, so a cq will be created
+		   separately for each endpoint */
 		rail_dev->cq = NULL;
 	} else {
 		cq_attr.format = FI_CQ_FORMAT_DATA;
