@@ -108,6 +108,9 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	/* Current available tag ID */
 	uint64_t tag;
 
+	/* copy of device's max_tag to reading device information */
+	uint64_t max_tag;
+
 	/* Endpoint handle to communicate to */
 	struct fid_ep *ofi_ep;
 
@@ -130,7 +133,8 @@ typedef struct nccl_net_ofi_sendrecv_domain {
 	/* Access Domain handle */
 	struct fid_domain *domain;
 
-	nccl_net_ofi_sendrecv_ep_t *ep;
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t key_pool;
 } nccl_net_ofi_sendrecv_domain_t;
 
 
