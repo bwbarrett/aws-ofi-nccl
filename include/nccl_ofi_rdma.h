@@ -119,6 +119,7 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
 	struct fid_mr *control_mr;
+	struct nccl_net_ofi_rdma_device *device;
 
 	int num_rails;
 
@@ -396,12 +397,6 @@ typedef struct nccl_net_ofi_rdma_req {
 	/* Size of completed request */
 	size_t size;
 
-	/*
-	 * Protect updating critical fields such as size and ncompls when
-	 * network xfer happened over multiple rails
-	 */
-	pthread_mutex_t req_lock;
-
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
 
@@ -531,7 +526,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
-	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
@@ -612,7 +606,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
 	/* Counters for total sent and received control messages */
-	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
 
@@ -686,8 +679,6 @@ struct nccl_net_ofi_ep_rail {
 	size_t min_bounce_posted;
 	/* Maximum posted bounce buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
 	size_t max_bounce_posted;
-	/* Mutex for bounce buffer operations */
-	pthread_mutex_t bounce_mutex;
 };
 
 /*
@@ -750,12 +741,6 @@ typedef struct nccl_net_ofi_rdma_device_rail {
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-
-	/* Access domain handles */
-	struct fid_domain *domain;
-
-	/* Completion Queue handle */
-	struct fid_cq *cq;
 } nccl_net_ofi_rdma_device_rail_t;
 
 /*
@@ -804,18 +789,34 @@ typedef struct nccl_net_ofi_rdma_device {
 	   lookup of comms in the RDMA protocol. */
 	nccl_net_ofi_comm_t **comms;
 
-	/* Memory registration key pool */
-	nccl_ofi_idpool_t key_pool;
-
 	bool use_long_rkeys;
-
-	/* List of endpoints and set of addresses they have connections to */
-	nccl_ofi_ep_addr_list_t *ep_addr_list;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
 } nccl_net_ofi_rdma_device_t;
+
+
+typedef struct nccl_net_ofi_rdma_domain_rail {
+	/* Access domain handles */
+	struct fid_domain *domain;
+
+	struct fid_cq *cq;
+} nccl_net_ofi_rdma_domain_rail_t;
+
+
+typedef struct nccl_net_ofi_rdma_domain {
+	nccl_net_ofi_domain_t base;
+
+	int num_rails;
+	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t key_pool;
+
+	/* List of endpoints and set of addresses they have connections to */
+	nccl_ofi_ep_addr_list_t *ep_addr_list;
+} nccl_net_ofi_rdma_domain_t;
 
 
 struct nccl_net_ofi_rdma_plugin {

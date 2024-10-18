@@ -23,9 +23,6 @@ typedef struct nccl_ofi_idpool {
 	/* ID pool bit array. A bit set in the array indicates
 	   that the ID corresponding to its index is available.*/
 	uint64_t *ids;
-
-	/* Lock for concurrency */
-	pthread_mutex_t lock;
 } nccl_ofi_idpool_t;
 
 /*
@@ -86,6 +83,16 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, size_t id);
  *		non-zero on error
  */
 int nccl_ofi_idpool_fini(nccl_ofi_idpool_t *idpool);
+
+
+/*
+ * @brief        Check if an idpool has been initialized with a size
+ *               other than 0.
+ */
+static inline bool nccl_ofi_idpool_active(nccl_ofi_idpool_t *idpool) {
+	return (idpool->size != 0);
+}
+
 
 #ifdef __cplusplus
 } // End extern "C"
