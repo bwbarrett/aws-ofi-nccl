@@ -338,6 +338,8 @@ OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
  */
 OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
 
+OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
