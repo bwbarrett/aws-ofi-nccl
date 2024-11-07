@@ -309,16 +309,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	assert(support_gdr != GDR_UNKNOWN);
 
-	/* we don't actually know if GDR is supported until we've
-	 * created the first endpoint, so this check needs to be way
-	 * down here
-	 */
-	if (nic_dup_conns > 0 && support_gdr != GDR_UNSUPPORTED) {
-		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
-		ret = -ENOTSUP;
-		goto exit;
-	}
-
 	*plugin_p = plugin;
 
  exit:

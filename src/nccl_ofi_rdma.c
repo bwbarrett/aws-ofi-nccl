@@ -7378,7 +7378,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
-
+	
 	/* Ensure that number of rails are the same across devices */
 	length = ofi_info_list_length(info_list);
 	if (topo->max_group_size != length) {
@@ -7387,6 +7387,29 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 		goto error;
 	}
 
+	if (nic_dup_conns > 1) {
+		struct fi_info *iter = info_list;
+		while (iter != NULL) {
+			for (int i = 1 ; i < nic_dup_conns ; i ++) {
+				struct fi_info *tmp = fi_dupinfo(iter);
+				if (tmp == NULL) {
+					goto error;
+				}
+
+				tmp->next = iter->next;
+				iter->next = tmp;
+
+				iter = tmp;
+			}
+			
+			iter = iter->next;
+		}
+
+		length *= nic_dup_conns;
+	}
+
+	NCCL_OFI_INFO(NCCL_NET, "Created device with %d rails", length);
+	
 	/* Create scheduler */
 	ret = nccl_net_ofi_threshold_scheduler_init(length, min_strip_size, &device->scheduler);
 	if (ret != 0) {
