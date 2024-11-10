@@ -7504,6 +7504,9 @@ static void get_hints(struct fi_info *hints)
 	 * should let it do that. */
 	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
 	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+
+	hints->tx_attr->msg_order = FI_ORDER_SAS;
+	hints->rx_attr->msg_order = FI_ORDER_SAS;
 }
 
 
