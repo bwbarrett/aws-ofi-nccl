@@ -18,6 +18,8 @@
 #include "nccl_ofi_msgbuff.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
+#include "stats/histogram.h"
+
 #if HAVE_NVTX_TRACING
 #include <nvtx3/nvToolsExt.h>
 #endif
@@ -850,6 +852,9 @@ typedef struct nccl_net_ofi_rdma_domain {
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t *ep_addr_list;
+
+	timer_histogram<histogram_linear_binner<size_t> > *cq_duration;
+	histogram<size_t, histogram_linear_binner<size_t> > *cq_count;
 } nccl_net_ofi_rdma_domain_t;
 
 

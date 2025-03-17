@@ -2065,6 +2065,11 @@ static ssize_t ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep, func done_check)
 	ssize_t loop_count;
 	ssize_t total_count = 0;
 
+	std::size_t time;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+
+	domain->cq_duration->start_timer();
+
 	do {
 		loop_count = 0;
 
@@ -2081,6 +2086,13 @@ static ssize_t ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep, func done_check)
 
 		total_count += loop_count;
 	} while (loop_count > 0 && !done_check());
+
+	time = domain->cq_duration->stop_timer();
+	if (time > 250) {
+		NCCL_OFI_WARN("Long poll (cq): %lu %ld", time, total_count);
+	}
+
+	domain->cq_count->insert(total_count);
 
 	/* Process any pending requests */
 	ret = process_pending_reqs(ep);
@@ -6004,6 +6016,11 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		}
 	} while (have_ctrl == false);
 
+	if (!have_ctrl) {
+		*base_req = NULL;
+		return ncclSuccess;
+	}
+
 	/* NCCL versions prior to 2.24 require special handling for 0 byte
 	 * messages when using user buffer registration.  NCCL passes the base
 	 * pointer from the user buffer, but passes the registration from the
@@ -7420,6 +7437,12 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	int ret;
 	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)base_domain;
 
+	domain->cq_duration->print_stats();
+	domain->cq_count->print_stats();
+
+	delete domain->cq_duration;
+	delete domain->cq_count;
+
 	ret = dealloc_and_dereg_flush_buff(domain);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
@@ -7532,6 +7555,18 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 	 */
 	ret = alloc_and_reg_flush_buff(domain, device->base.dev_id);
 	if (OFI_UNLIKELY(ret != 0)) {
+		goto error;
+	}
+
+	domain->cq_duration = new timer_histogram<histogram_linear_binner<size_t> >("CQ Polling Duration", histogram_linear_binner<size_t>(0, 50, 10));
+	if (domain->cq_duration == NULL) {
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	domain->cq_count= new histogram<size_t, histogram_linear_binner<size_t> >(std::string("CQ count (device ") + std::to_string(base_dev->dev_id), histogram_linear_binner<size_t>(0, 8, 10));
+	if (domain->cq_count == NULL) {
+		ret = -ENOMEM;
 		goto error;
 	}
 
