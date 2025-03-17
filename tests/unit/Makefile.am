@@ -20,7 +20,8 @@ noinst_PROGRAMS = \
 	scheduler \
 	idpool \
 	ep_addr_list \
-	mr
+	mr \
+	histogram
 
 if WANT_PLATFORM_AWS
 noinst_PROGRAMS += aws_platform_mapper
@@ -45,6 +46,7 @@ scheduler_SOURCES = scheduler.cpp
 ep_addr_list_SOURCES = ep_addr_list.cpp
 mr_SOURCES = mr.cpp
 aws_platform_mapper_SOURCES = aws_platform_mapper.cpp
+histogram_SOURCES = histogram.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif

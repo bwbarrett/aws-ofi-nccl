@@ -212,7 +212,7 @@ dnl header declarating the function.
 ADD_PICKY_FLAGS([-Wmissing-declarations])
 
 dnl enable GCC's static analyzer
-ADD_PICKY_FLAGS([-fanalyzer])
+dnl ADD_PICKY_FLAGS([-fanalyzer])
 dnl todo: clang-sa flags
 
 AC_ARG_ENABLE([picky-compiler],

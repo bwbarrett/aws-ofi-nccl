@@ -17,6 +17,8 @@
 #include "nccl_ofi_msgbuff.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
+#include "stats.h"
+
 #if HAVE_NVTX_TRACING
 #include <nvtx3/nvToolsExt.h>
 #endif
@@ -855,6 +857,9 @@ typedef struct nccl_net_ofi_rdma_domain {
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t *ep_addr_list;
+
+	timer_histogram<> *cq_duration;
+	timer_histogram<> *cq_polling_duration;
 } nccl_net_ofi_rdma_domain_t;
 
 

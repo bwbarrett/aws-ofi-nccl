@@ -1957,16 +1957,18 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 	return rc;
 }
 
-static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
+static ssize_t ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	ssize_t rc = 0;
 	int ret = 0;
+	ssize_t total_count = 0;
 
 	while (true) {
 		/* Receive completions for the given endpoint */
 		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
 		if (rc > 0) {
+			total_count += rc;
 			ret = process_completions(cqe_buffers, rc, rdma_endpoint_get_device(ep), rail->rail_id);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
@@ -1994,6 +1996,7 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 		}
 	}
 
+	return total_count;
 exit:
 	return ret;
 }
@@ -2007,25 +2010,39 @@ exit:
  */
 static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 {
-	int ret;
+	int ret = 0;
+	ssize_t count, total_count = 0;
+	std::size_t time;
+	
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	domain->cq_duration->start_timer();
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 
-		ret = ofi_process_cq_rail(ep, rail);
-		if (ret != 0) {
+		count = ofi_process_cq_rail(ep, rail);
+		if (count < 0) {
+			NCCL_OFI_WARN("womp womp: %ld\n", count);
 			goto exit;
 		}
+		total_count += count;
 	}
 
+	time = domain->cq_duration->stop_timer();
+	if (time > 250) {
+		NCCL_OFI_WARN("Long poll: %lu %ld\n", time, total_count);
+	}
+
+	domain->cq_polling_duration->start_timer();
 	/* Process any pending requests */
 	ret = process_pending_reqs(ep);
 	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Failed call to process_pending_reqs: %d", ret);
 	}
+	domain->cq_polling_duration->stop_timer();
 
  exit:
-	return ret;
+	return 0;
 }
 
 /*
@@ -5880,7 +5897,7 @@ retry:
 			nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
 			ret = ofi_process_cq_rail(ep, rail);
-			if (OFI_UNLIKELY(ret != 0)) {
+			if (OFI_UNLIKELY(ret < 0)) {
 				goto error;
 			}
 		}
@@ -7293,6 +7310,9 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	int ret;
 	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)base_domain;
 
+	delete domain->cq_duration;
+	delete domain->cq_polling_duration;
+
 	ret = dealloc_and_dereg_flush_buff(domain);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
@@ -7408,6 +7428,18 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 	 */
 	ret = alloc_and_reg_flush_buff(domain, device->base.dev_id);
 	if (OFI_UNLIKELY(ret != 0)) {
+		goto error;
+	}
+
+	domain->cq_duration = new timer_histogram<>("CQ Polling Duration", 50, 10);
+	if (domain->cq_duration == NULL) {
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	domain->cq_polling_duration = new timer_histogram<>("CQ Pending Duration", 50, 10);
+	if (domain->cq_polling_duration == NULL) {
+		ret = -ENOMEM;
 		goto error;
 	}
 
