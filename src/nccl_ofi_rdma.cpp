@@ -1879,77 +1879,76 @@ static ssize_t ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	ssize_t rc = 0;
-	ssize_t count = 0;
 	int ret = 0;
 
-	while (true) {
-		/* Receive completions for the given endpoint */
-		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
-		if (rc > 0) {
-			ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
-			if (OFI_UNLIKELY(ret != 0)) {
-				return static_cast<ssize_t>(ret);
-			}
+	/* Receive completions for the given endpoint */
+	rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
+	if (rc > 0) {
+		ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return static_cast<ssize_t>(ret);
+		}
 
-			count += rc;
-		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
+		return rc;
+	} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
+		/*
+		 * On call to fi_cq_readerr, Libfabric requires some members of
+		 * err_entry to be zero-initialized or point to valid data.  For
+		 * simplicity, just zero out the whole struct.
+		 */
+		struct fi_cq_err_entry err_entry = { };
+
+		rc = fi_cq_readerr(rail->cq, &err_entry, 0);
+		if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 			/*
-			 * On call to fi_cq_readerr, Libfabric requires some members of
-			 * err_entry to be zero-initialized or point to valid data.  For
-			 * simplicity, just zero out the whole struct.
+			 * Error not available yet.
+			 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
 			 */
-			struct fi_cq_err_entry err_entry = { };
-
-			rc = fi_cq_readerr(rail->cq, &err_entry, 0);
-			if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
-				/*
-				 * Error not available yet.
-				 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
-				 */
-				return count;
-			} else if (OFI_UNLIKELY(rc < 0)) {
-				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
-					      rc, fi_strerror(-rc));
-				return rc;
-			}
-
-			ret = rdma_process_error_entry(&err_entry, rail->cq, rail->rail_id);
-			if (ret != 0) {
-				return static_cast<ssize_t>(ret);
-			}
-		} else if (rc == -FI_EAGAIN) {
-			/* No completions to process */
-			break;
-		} else {
-			NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
+			return 0;
+		} else if (OFI_UNLIKELY(rc < 0)) {
+			NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
 				      rc, fi_strerror(-rc));
 			return rc;
 		}
-	}
 
-	return count;
+		ret = rdma_process_error_entry(&err_entry, rail->cq, rail->rail_id);
+		return static_cast<ssize_t>(ret);
+	} else if (rc == -FI_EAGAIN) {
+		return 0;
+	} else {
+		NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
+			      rc, fi_strerror(-rc));
+		return rc;
+	}
 }
 
 
-int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
+template <typename func>
+int nccl_net_ofi_rdma_ep_t::ofi_process_cq(func done_check)
 {
 	int ret;
-	ssize_t count;
+	ssize_t loop_count;
 	ssize_t total_count = 0;
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain_ptr);
 
-	for (uint16_t rail_id = 0; rail_id != domain_ptr->num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_domain_rail_t *rail = rdma_domain_get_rail(domain_ptr, rail_id);
+	do {
+		loop_count = 0;
 
-		count = ofi_process_cq_rail(device, rail);
-		if (count < 0) {
-			return static_cast<int>(count);
+		for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
+			nccl_net_ofi_rdma_domain_rail_t *domain_rail = rdma_domain_get_rail(domain_ptr, rail_id);
+
+			ssize_t count = ofi_process_cq_rail(device, domain_rail);
+			if (count < 0) {
+				return static_cast<int>(count);
+			}
+
+			loop_count += count;
 		}
 
-		total_count += count;
-	}
+		total_count += loop_count;
+	} while (loop_count > 0 && !done_check());
 
 	/* Process any pending requests */
 	ret = process_pending_reqs();
@@ -1959,6 +1958,12 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 	}
 
 	return static_cast<int>(total_count);
+}
+
+
+int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
+{
+	return ofi_process_cq([]() -> bool { return false; });
 }
 
 
@@ -2593,7 +2598,9 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	 * completed */
 	if (req->state != NCCL_OFI_RDMA_REQ_COMPLETED
 		&& OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
-		ret = ep->ofi_process_cq();
+		ret = ep->ofi_process_cq([&req]() -> bool {
+			return (req->state == NCCL_OFI_RDMA_REQ_COMPLETED);
+		});
 		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
 		}
@@ -5699,7 +5706,6 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
 	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_req_t *req = NULL;
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
-	bool polled_cq = false;
 	bool have_ctrl = false;
 	bool eager = false;
 	int dev_id = 0;
@@ -5755,59 +5761,62 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
 	nccl_ofi_msgbuff_elemtype_t type;
 	nccl_ofi_msgbuff_status_t msg_stat;
 	nccl_ofi_msgbuff_result_t mb_res;
+	size_t total_count;
 
-retry:
-	/* Retrive entry from message buffer for msg_seq_num index */
-	mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, &elem,
-					   &type, &msg_stat);
-	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
-		if (OFI_LIKELY(type == NCCL_OFI_MSGBUFF_BUFF)) {
-			/*
-			 * Received RDMA control message from receiver so
-			 * allocate request and initiate RDMA write
-			 */
-			have_ctrl = true;
-		} else if (type == NCCL_OFI_MSGBUFF_REQ) {
-			/* Shouldn't happen: we already have a req in the message buffer */
-			NCCL_OFI_WARN("Duplicate request in message buffer for msg %hu", msg_seq_num);
-			ret = -EINVAL;
-			goto error;
-		} else {
-			NCCL_OFI_WARN("Unexpected type of buffer retrieved from message buffer: %d",
-				      type);
-			ret = -EINVAL;
-			goto error;
-		}
-	} else if ((mb_res == NCCL_OFI_MSGBUFF_INVALID_IDX) &&
-		   (msg_stat == NCCL_OFI_MSGBUFF_NOTSTARTED)) {
-		/*
-		 * We haven't encountered this message sequence number.
-		 * Allocate a request so that we are able to send RDMA write
-		 * as soon as we receive the RDMA control message.
-		 */
-		have_ctrl = false;
-	} else {
-		NCCL_OFI_WARN("Message %hu has invalid status. res = %d and stat = %d",
-			      msg_seq_num, mb_res, msg_stat);
-		ret = -EINVAL;
-		goto error;
-	}
-
-	/* look for control messages and then retry the message search
-	   to avoid unnecessary polling / queueing. */
-	if (OFI_UNLIKELY(!polled_cq && !have_ctrl)) {
-		for (uint16_t rail_id = 0; rail_id != s_comm->num_control_rails; ++rail_id) {
-			nccl_net_ofi_rdma_domain_rail_t *rail =
-				rdma_domain_get_rail(domain, rail_id);
-
-			ret = ofi_process_cq_rail(rdma_domain_get_device(domain), rail);
-			if (OFI_UNLIKELY(ret < 0)) {
+	do {
+		/* Retrive entry from message buffer for msg_seq_num index */
+		mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, &elem,
+						   &type, &msg_stat);
+		if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
+			if (OFI_LIKELY(type == NCCL_OFI_MSGBUFF_BUFF)) {
+				/*
+				 * Received RDMA control message from receiver so
+				 * allocate request and initiate RDMA write
+				 */
+				have_ctrl = true;
+			} else if (type == NCCL_OFI_MSGBUFF_REQ) {
+				/* Shouldn't happen: we already have a req in the message buffer */
+				NCCL_OFI_WARN("Duplicate request in message buffer for msg %hu", msg_seq_num);
+				ret = -EINVAL;
+				goto error;
+			} else {
+				NCCL_OFI_WARN("Unexpected type of buffer retrieved from message buffer: %d",
+					      type);
+				ret = -EINVAL;
 				goto error;
 			}
+		} else if ((mb_res == NCCL_OFI_MSGBUFF_INVALID_IDX) &&
+			   (msg_stat == NCCL_OFI_MSGBUFF_NOTSTARTED)) {
+			/*
+			 * We haven't encountered this message sequence number.
+			 * Allocate a request so that we are able to send RDMA write
+			 * as soon as we receive the RDMA control message.
+			 */
+			have_ctrl = false;
+		} else {
+			NCCL_OFI_WARN("Message %hu has invalid status. res = %d and stat = %d",
+				      msg_seq_num, mb_res, msg_stat);
+			ret = -EINVAL;
+			goto error;
 		}
-		polled_cq = true;
-		goto retry;
-	}
+
+		/* look for control messages and then retry the message search
+		   to avoid unnecessary polling / queueing. */
+		total_count = 0;
+		if (!have_ctrl) {
+			for (uint16_t rail_id = 0; rail_id != s_comm->num_control_rails; ++rail_id) {
+				nccl_net_ofi_rdma_domain_rail_t *rail =
+					rdma_domain_get_rail(domain, rail_id);
+				ssize_t rail_cnt;
+				rail_cnt = ofi_process_cq_rail(rdma_domain_get_device(domain), rail);
+				if (OFI_UNLIKELY(rail_cnt < 0)) {
+					ret = static_cast<int>(rail_cnt);
+					goto error;
+				}
+				total_count += rail_cnt;
+			}
+		}
+	} while (total_count > 0);
 
 	/* NCCL versions prior to 2.24 require special handling for 0 byte
 	 * messages when using user buffer registration.  NCCL passes the base
