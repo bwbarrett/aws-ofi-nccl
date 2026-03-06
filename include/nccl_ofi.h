@@ -313,7 +313,7 @@ public:
 	 * of performance tradeoffs (be sure to read the domain
 	 * description below).
 	 */
-	std::shared_ptr<nccl_net_ofi_domain_t> get_domain(unsigned int domain_key = 0);
+	std::shared_ptr<nccl_net_ofi_domain_t> get_domain(unsigned int domain_key = 0) EXCLUDES(device_lock);
 
 	/* Retrieve an endpoint associated with this device under the requested
 	 * domain scope.
@@ -322,12 +322,12 @@ public:
 	 * @param endpoint_key Key for endpoint caching within the domain.
 	 *                     Caller must provide an explicit key (e.g., TID or comm_id).
 	 */
-	std::shared_ptr<nccl_net_ofi_ep_t> get_ep(unsigned int domain_key, long endpoint_key);
+	std::shared_ptr<nccl_net_ofi_ep_t> get_ep(unsigned int domain_key, long endpoint_key) EXCLUDES(device_lock);
 
 	/**
 	 * @brief	Erase all domain_table elements matching the provided domain
 	 */
-	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
+	void remove_domain_from_map(nccl_net_ofi_domain_t *domain) REQUIRES(device_lock);
 
 	nccl_net_ofi_plugin_t *plugin = nullptr;
 
@@ -389,7 +389,7 @@ protected:
 	 * the domain is destroyed and the weak_ptr expires. Stale
 	 * entries are purged lazily on the next get_domain() miss.
 	 */
-	std::unordered_map<unsigned int, std::weak_ptr<nccl_net_ofi_domain_t>> domain_table;
+	std::unordered_map<unsigned int, std::weak_ptr<nccl_net_ofi_domain_t>> domain_table GUARDED_BY(device_lock);
 
 };
 
@@ -460,7 +460,7 @@ public:
 	 * @param endpoint_key Key for endpoint caching.
 	 * Caller must provide an explicit key (e.g., TID or comm_id).
 	 */
-	std::shared_ptr<nccl_net_ofi_ep_t> get_ep(long endpoint_key);
+	std::shared_ptr<nccl_net_ofi_ep_t> get_ep(long endpoint_key) EXCLUDES(domain_lock);
 
 	/*
 	 * Protocol-agnostic MR cache for this device.
@@ -478,7 +478,7 @@ public:
 	/**
 	 * @brief       Erase all ep_table elements matching the provided ep
 	 */
-	void remove_ep_from_map(nccl_net_ofi_ep_t *ep);
+	void remove_ep_from_map(nccl_net_ofi_ep_t *ep) REQUIRES(domain_lock);
 
 	/**
 	 * @brief	Destructor.
@@ -487,10 +487,10 @@ public:
 	 */
 	virtual ~nccl_net_ofi_domain_t();
 
-protected:
 
-	/* Backpointer to the device associated with this domain. */
-	nccl_net_ofi_device_t *const device = nullptr;
+protected:
+       /* Backpointer to the device associated with this domain. */
+       nccl_net_ofi_device_t *const device = nullptr;
 
 	/* The Domain index or a key in the device domain table */
 	const unsigned int domain_key;
@@ -509,7 +509,7 @@ protected:
 	 * expires. Stale entries are purged lazily on the next
 	 * get_ep() miss.
 	 */
-	std::unordered_map<long, std::weak_ptr<nccl_net_ofi_ep_t>> ep_table;
+	std::unordered_map<long, std::weak_ptr<nccl_net_ofi_ep_t>> ep_table GUARDED_BY(domain_lock);
 };
 
 
@@ -591,7 +591,7 @@ public:
 	 *
 	 * This flag is protected by ep_lock
 	 */
-	bool ep_active;
+	bool ep_active GUARDED_BY(ep_lock);
 
 	/**
 	 * Invalidate endpoint. Marks the endpoint as inactive and removes it from the
@@ -599,7 +599,7 @@ public:
 	 *
 	 * Caller is assumed to hold ep_lock
 	 */
-	virtual void invalidate();
+	virtual void invalidate() REQUIRES(ep_lock);
 
 	/**
 	 * Get reference to the back-pointed net domain object associated with

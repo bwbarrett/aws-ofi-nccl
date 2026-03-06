@@ -397,7 +397,7 @@ public:
 	// fabirc, domain, and cq as well as freeing prov_name.
 
 	/* Fabric handle */
-	ofi_fabric_ptr fabric;
+	ofi_fabric_ptr fabric GUARDED_BY(device_lock);
 
 protected:
 	/**
