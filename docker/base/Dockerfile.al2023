@@ -29,6 +29,19 @@ RUN dnf config-manager --add-repo \
     yum -y install cuda-cudart-devel-12-6 cuda-crt-12-6 && \
     yum clean all
 
+# Install ROCm
+RUN tee /etc/yum.repos.d/rocm.repo <<EOF
+[ROCm-6.2]
+name=ROCm6.2
+baseurl=https://repo.radeon.com/rocm/el9/6.2/main
+enabled=1
+priority=50
+gpgcheck=1
+gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
+EOF
+RUN yum -y install rocm-hip-runtime-devel && \
+    yum clean all
+
 # Install EFA
 RUN curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
     tar -xf aws-efa-installer-*.tar.gz && \

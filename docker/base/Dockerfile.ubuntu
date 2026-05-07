@@ -72,6 +72,20 @@ RUN repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6 && \
     rm -rf /var/lib/apt/lists/*
 
+# Install ROCm
+# Pin priority ensures ROCm repo packages override older versions
+# shipped in the Ubuntu archive (e.g. rocm-cmake, hipcc).
+RUN mkdir -p /etc/apt/keyrings && \
+    wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
+    gpg --dearmor > /etc/apt/keyrings/rocm.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2 jammy main" \
+    > /etc/apt/sources.list.d/rocm.list && \
+    printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' \
+    > /etc/apt/preferences.d/rocm-pin-600 && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y rocm-hip-runtime-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install lttng
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y liblttng-ust-dev && \
