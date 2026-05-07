@@ -5,8 +5,6 @@ FROM ubuntu:22.04
 ARG CC_TYPE=gcc
 ARG CC_VARIANT=latest
 ARG CC_VERSION
-ARG ENABLE_TRACING=false
-ARG ENABLE_CUDA=false
 ARG EFA_INSTALLER_VERSION=latest
 
 # Enable all Ubuntu repositories and install base packages
@@ -66,21 +64,17 @@ RUN apt-get update && \
     fi && \
     rm -rf /var/lib/apt/lists/*
 
-# Install CUDA if enabled
-RUN if [ "$ENABLE_CUDA" = "true" ]; then \
-        repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
-        wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb && \
-        dpkg -i cuda-keyring_1.1-1_all.deb && \
-        apt-get update && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6 && \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
+# Install CUDA
+RUN repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install lttng if enabled
-RUN if [ "$ENABLE_TRACING" = "true" ]; then \
-        apt-get update && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y liblttng-ust-dev && \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
+# Install lttng
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y liblttng-ust-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
