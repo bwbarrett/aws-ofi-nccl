@@ -14,6 +14,9 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
@@ -2597,7 +2600,6 @@ int rdma_recv_req::post()
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 	uint64_t remote_addr = r_comm->remote_mailbox_addr +
 			       slot * sizeof(nccl_net_ofi_ctrl_msg_t);
-	const bool inject = ep->use_inline_control_write(ctrl_msg_len);
 	struct iovec iov = {
 		.iov_base = &r_comm->ctrl_mailbox[slot],
 		.iov_len = ctrl_msg_len,
@@ -2617,10 +2619,17 @@ int rdma_recv_req::post()
 		.context = rdma_req_get_ofi_context(this, rail_id),
 		.data = 0,
 	};
+	uint64_t flags = 0;
 
-	NCCL_OFI_TRACE(NCCL_NET, "Posting %zu-byte control message%s on rail %u",
-		       ctrl_msg_len, inject ? " with FI_INJECT" : "", rail_id);
-	ssize_t rc = fi_writemsg(comm_rail->local_ep, &msg, inject ? FI_INJECT : 0);
+	if (ep->use_inline_control_write(ctrl_msg_len)) {
+		flags |= FI_INJECT;
+	}
+	flags |= ep->cntrl_write_flags;
+
+	NCCL_OFI_TRACE(NCCL_INIT,
+		       "Posting %zu-byte control message with flags 0x%" PRIx64 " on rail %u",
+		       ctrl_msg_len, flags, rail_id);
+	ssize_t rc = fi_writemsg(comm_rail->local_ep, &msg, flags);
 
 	if (rc == 0) {
 		NCCL_OFI_TRACE_WRITE_CTRL_START(this->dev_id, rail_id, this->comm, this, this->msg_seq_num);
@@ -6876,6 +6885,16 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 
 	/* Create scheduler */
 	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
+
+#if HAVE_DECL_FI_EFA_WR_HIGH_PPS
+	/* if we're using EFA, try to use the high pps flag for control messages, since
+	   we do not care about ordering in that case. */
+	if (strncmp("efa",
+		    domain->get_device()->get_ofi_info(0)->fabric_attr->prov_name,
+		    strlen("efa")) == 0) {
+		this->cntrl_write_flags = FI_EFA_WR_HIGH_PPS;
+	}
+#endif
 }
 
 

@@ -1741,6 +1741,12 @@ public:
 	/* Message scheduler */
 	nccl_net_ofi_scheduler *scheduler = nullptr;
 
+	/* flags to pass in the `flags` argument of fi_writemsg() for control
+	 * messages.  Others (such as FI_INJECT) may be added in
+	 * recv_req::post(), but these are the always-on flags.
+	 */
+	uint64_t cntrl_write_flags = 0;
+
 protected:
 	/* Maximum RMA inject size supported by the control endpoint. */
 	size_t max_control_write_inline_size = 0;
